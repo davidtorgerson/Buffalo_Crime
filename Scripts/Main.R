@@ -4,6 +4,8 @@ library(lubridate)
 library(tidycensus)
 library(stringr)
 library(tibble)
+library(purrr)
+
 
 ######################### Reading in the Data ####################
 #This Analysis is of crime data in Buffalo, NY
@@ -11,6 +13,7 @@ library(tibble)
 #https://data.buffalony.gov/Public-Safety/Crime-Incidents/d6g9-xbgu
 
 crime = read_csv("Data/Crime_Incidents.csv")
+
 
 ######################## Cleaning the Data #######################
 
@@ -41,6 +44,7 @@ crime_clean = crime %>%
 
 str(crime_clean)
 
+
 ########################### Exploratory Data Analysis ######################
 
 #Plotting trend of crime counts
@@ -55,43 +59,47 @@ crime_clean %>%
   geom_freqpoly(aes(x = incident_datetime, color = incident_type_primary)) #Shows trends of individual crimes
 
 #Filtering data to start at year of regular collection
-new_crime = crime_clean %>%
-  filter(year(incident_datetime) >= '2009')
+crime_since_2009 = crime_clean %>%
+  filter(year(incident_datetime) >= '2009') %>%
+  mutate(incident = case_when(
+    incident_type_primary %in% c('THEFT OF SERVICES','THEFT OF VEHICLE') ~ 'THEFT', #Aggregating crimes
+    incident_type_primary %in% c('AGG ASSAULT ON P/OFFICER', 'AGGR ASSAULT') ~ 'ASSAULT', #Aggregating crimes
+    TRUE ~ incident_type_primary)) %>%
+  filter(!incident %in% c('BREAKING & ENTERING','HOMICIDE','CRIM NEGLIGENT HOMICIDE',
+                       'MANSLAUGHTER','OTHER SEXUAL OFFENSE','SEXUAL ASSAULT')) #Removing crimes with low volume (< 100)
 
-#Exploratory graphs to understand the data
-new_crime %>%
+#Verifying Incidents were removed
+crime_since_2009 %>%
+  count(incident)
+
+#Exploratory graphs to understand the filtered data
+crime_since_2009 %>%
   ggplot() + geom_bar(aes(x = year(incident_datetime)), fill = 'lightblue') #Shows total crime is steadily decreasing
 
-new_crime %>%
+crime_since_2009 %>%
   ggplot() + geom_bar(aes(x = month(incident_datetime)), fill = 'orange') #Crime spikes in July/August
 
-new_crime %>%
+crime_since_2009 %>%
   ggplot() + geom_bar(aes(x = day_of_week), fill = 'maroon') #Not much noticeable difference for day of week
 
-new_crime %>%
+crime_since_2009 %>%
   ggplot() + geom_bar(aes(x = incident), fill = 'purple') +
   coord_flip() #This shows the top crimes are: Larceny/Theft, Assault, Robbery, Burglary, UUV
 
-#Collapsing crimes 
-new_crime = new_crime %>%
-  mutate(incident = case_when(
-    incident_type_primary %in% c('THEFT OF SERVICES','THEFT OF VEHICLE') ~ 'THEFT',
-    incident_type_primary %in% c('AGG ASSAULT ON P/OFFICER', 'AGGR ASSAULT') ~ 'ASSAULT',
-    TRUE ~ incident_type_primary
-  ))
 
 ############## Aggregating data for model building ###################
 
 #Crimes by day and type
-daily_incidents = new_crime %>%
+daily_incident_counts = crime_since_2009 %>%
   mutate(incident_date = as.Date(incident_datetime)) %>%
   count(incident_date, incident) %>%
   arrange(incident, incident_date)
 
-daily_incidents %>%
+daily_incident_counts %>%
   ggplot() + 
   geom_line(aes(x = incident_date, y = n, color = incident)) +
   facet_wrap(~ incident, scales = "free_y")
+
 
 ##################### Forecasting Model Building ##################
 
@@ -103,20 +111,29 @@ seq_dates = seq.Date(
   by = 1) %>%
   enframe(name = NULL, value = "incident_date")
 
-daily_incidents = left_join(
-  x = seq_dates,
-  y = daily_incidents,
-  by = "incident_date"
-) %>%
-  mutate(crime_count = ifelse(is.na(n), 0, n))
+all_daily_incidents <- daily_incident_counts %>%
+  split(.$incident) %>%
+  map(., function(i) {
+    left_join(
+      x = seq_dates,
+      y = i,
+      by = "incident_date"
+    ) %>%
+      fill(incident, .direction = "downup") %>%
+      replace_na(list(n = 0))
+  }) %>%
+  bind_rows()
+#The code above splits the dataframe by incidents map the dates together
+#Filling in all the missing dates with a count of 0
+#Assumption: If date is missing from original data, that incident did not occur (count of 0)
 
 #Extracting the other date-based data features
-new_daily_incidents = daily_incidents %>%
+complete_daily_incidents = all_daily_incidents %>%
   mutate(month = month(incident_date)) %>%
   mutate(year = year(incident_date)) %>%
   mutate(week = week(incident_date)) %>%
   mutate(weekday = wday(incident_date)) %>%
-  select(-n)
+  rename(crime_count = n)
 
 
 
