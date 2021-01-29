@@ -3,6 +3,7 @@ library(ggplot2)
 library(lubridate)
 library(tidycensus)
 library(stringr)
+library(tibble)
 
 ######################### Reading in the Data ####################
 
@@ -91,9 +92,28 @@ daily_incidents %>%
 
 ##################### Forecasting Model Building ##################
 
-# 7 day Horizon Forecast
+##Prepping the data and features
+#Making sure that there are no skips in dates
+seq_dates = seq.Date(
+  from = as.Date("2009-01-01"),
+  to = as.Date("2021-01-24"),
+  by = 1) %>%
+  enframe(name = NULL, value = "incident_date")
 
+daily_incidents = left_join(
+  x = seq_dates,
+  y = daily_incidents,
+  by = "incident_date"
+) %>%
+  mutate(crime_count = ifelse(is.na(n), 0, n))
 
+#Extracting the other date-based data features
+new_daily_incidents = daily_incidents %>%
+  mutate(month = month(incident_date)) %>%
+  mutate(year = year(incident_date)) %>%
+  mutate(week = week(incident_date)) %>%
+  mutate(weekday = wday(incident_date)) %>%
+  select(-n)
 
 
 
