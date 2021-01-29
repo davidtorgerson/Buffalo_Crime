@@ -6,6 +6,9 @@ library(stringr)
 library(tibble)
 
 ######################### Reading in the Data ####################
+#This Analysis is of crime data in Buffalo, NY
+#The data used in this analysis can be found here:
+#https://data.buffalony.gov/Public-Safety/Crime-Incidents/d6g9-xbgu
 
 crime = read_csv("Data/Crime_Incidents.csv")
 
@@ -19,7 +22,7 @@ district_b = c(14201,14202,14208,14209,14213,14222)
 district_c = c(14205,14212)
 district_d = c(14207,14214,14216)
 district_e = c(14211,14215)
-#Districts share some zip codes - those are only attributed to one district
+#Districts share some zip codes - those codes are only attributed to one district
 #zip codes obtained from 211wny.org
 
 crime_clean = crime %>%
