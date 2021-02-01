@@ -142,10 +142,10 @@ recent_daily_incidents = complete_daily_incidents %>%
   filter(incident_date > '2015-01-01')
 
 all_years_training = rolling_origin(
-  data = recent_daily_incidents,
-  initial = (365*3),
-  assess = 30,
-  skip = 14
+  data = recent_daily_incidents, #Using recent data from 2015 and later
+  initial = (365*3), #Using three years for the initial training sample
+  assess = 30, #Forecast Horizon - how far in the future do I want to predict
+  skip = 14 #How large is the window moving forward after each split
 )
 
 
