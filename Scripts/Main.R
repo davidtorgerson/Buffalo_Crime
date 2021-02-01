@@ -5,6 +5,7 @@ library(tidycensus)
 library(stringr)
 library(tibble)
 library(purrr)
+library(rsample)
 
 
 ######################### Reading in the Data ####################
@@ -135,6 +136,17 @@ complete_daily_incidents = all_daily_incidents %>%
   mutate(weekday = wday(incident_date)) %>%
   rename(crime_count = n)
 
+##Creating Testing Data sets
+#Using last 5 years for training data
+recent_daily_incidents = complete_daily_incidents %>%
+  filter(incident_date > '2015-01-01')
+
+all_years_training = rolling_origin(
+  data = recent_daily_incidents,
+  initial = (365*3),
+  assess = 30,
+  skip = 14
+)
 
 
 
