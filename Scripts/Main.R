@@ -139,14 +139,30 @@ complete_daily_incidents = all_daily_incidents %>%
 ##Creating Testing Data sets
 #Using last 5 years for training data
 recent_daily_incidents = complete_daily_incidents %>%
-  filter(incident_date > '2015-01-01')
+  filter(incident_date >= '2015-01-01')
 
-all_years_training = rolling_origin(
-  data = recent_daily_incidents, #Using recent data from 2015 and later
-  initial = (365*3), #Using three years for the initial training sample
-  assess = 30, #Forecast Horizon - how far in the future do I want to predict
-  skip = 14 #How large is the window moving forward after each split
-)
+#Split training data by crime
+crime_splits = split(recent_daily_incidents, recent_daily_incidents$incident)
+#The code above splits the data frame into multiple tibbles separated by incident
+
+#Applying validation design to each crime individually
+rocv_by_crime = map2(crime_splits, names(crime_splits), function(df, nm){
+  train_test_index = rolling_origin(
+    data = recent_daily_incidents, #Using recent data from 2015 and later
+    initial = (365*4), #Using four years for the initial training sample
+    assess = 14, #Forecast Horizon - how far in the future do I want to predict
+    cumulative = TRUE,
+    skip = 14 #How large is the window moving forward after each split
+  ) %>%
+    mutate(Iteration = row_number())
+})
+#We use map2 here since we have two arguments, the splits and the name of those splits.
+#Those are then used in the function following to go through each iteration (crime)
+
+#Combining within-crime ROCV and then split by iteration
+rocv_by_iteration = rocv_by_crime %>%
+  bind_rows() %>%
+  split(.$Iteration)
 
 
 
