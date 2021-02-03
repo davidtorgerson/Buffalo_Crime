@@ -141,29 +141,62 @@ complete_daily_incidents = all_daily_incidents %>%
 recent_daily_incidents = complete_daily_incidents %>%
   filter(incident_date >= '2015-01-01')
 
-#Split training data by crime
-crime_splits = split(recent_daily_incidents, recent_daily_incidents$incident)
-#The code above splits the data frame into multiple tibbles separated by incident
+# --- Is this part still necessary? Or should I still follow through with this path? ---
 
-#Applying validation design to each crime individually
-rocv_by_crime = map2(crime_splits, names(crime_splits), function(df, nm){
-  train_test_index = rolling_origin(
-    data = recent_daily_incidents, #Using recent data from 2015 and later
+# #Split training data by crime
+# crime_splits = split(recent_daily_incidents, recent_daily_incidents$incident)
+# #The code above splits the data frame into multiple tibbles separated by incident
+# 
+# #Applying validation design to each crime individually
+# rocv_by_crime = map2(crime_splits, names(crime_splits), function(df, nm){
+#   train_test_index = rolling_origin(
+#     data = df, #Using recent data from 2015 and later
+#     initial = (365*4), #Using four years for the initial training sample
+#     assess = 14, #Forecast Horizon - how far in the future do I want to predict. 14 days because it allows for staffing adjustments/coverage and still maintains accuracy which you begin to lose the further out your predicting
+#     cumulative = TRUE,
+#     skip = 14 #How large is the window moving forward after each split. IDK why 14 days, does it matter how big the window is?
+#   ) %>%
+#     mutate(Iteration = row_number())
+# })
+# #We use map2 here since we have two arguments, the splits and the name of those splits.
+# #Those are then used in the function following to go through each iteration (crime)
+# 
+# #Combining within-crime ROCV and then split by iteration
+# rocv_by_iteration = rocv_by_crime %>%
+#   bind_rows() %>%
+#   split(.$Iteration)
+# ------------------------------------------------------------------------
+
+#################### ANOTHER WAY TO APPLY ROCV for Train/Test Data ######################
+z_scale = function(x) {
+  (x - mean(x))/sd(x) #Creating a function that turns counts in z scores
+}
+
+recent_daily_incidents_wide = recent_daily_incidents %>%
+  spread(incident, crime_count) %>% #This de-duplicates the incident dates
+  mutate_at(vars(ASSAULT:UUV), list(z_scale)) #Turning crime counts into z scores to be able to compare them to each other
+
+rocv_by_crime2 = recent_daily_incidents_wide %>%
+  rolling_origin(
+    data = ., #Using recent data from 2015 and later
     initial = (365*4), #Using four years for the initial training sample
-    assess = 14, #Forecast Horizon - how far in the future do I want to predict
+    assess = 14, #Forecast Horizon - how far in the future do I want to predict. 14 days because it allows for staffing adjustments/coverage and still maintains accuracy which you begin to lose the further out your predicting
     cumulative = TRUE,
-    skip = 14 #How large is the window moving forward after each split
-  ) %>%
-    mutate(Iteration = row_number())
+    skip = 14 #How large is the window moving forward after each split. IDK why 14 days, does it matter how big the window is?
+  )
+
+train_test_splits = map(rocv_by_crime2$splits, function(split){
+  train = analysis(split) %>% #Using analysis will create our training data
+    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday) #Converting data back to long format without the date features
+
+  test = assessment(split) %>% #Using assessment will create our testing data
+    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday) #Converting data back to long format without the date features
+  
+  out = list(train = train, test = test)
+  
+  return(out)
 })
-#We use map2 here since we have two arguments, the splits and the name of those splits.
-#Those are then used in the function following to go through each iteration (crime)
 
-#Combining within-crime ROCV and then split by iteration
-rocv_by_iteration = rocv_by_crime %>%
-  bind_rows() %>%
-  split(.$Iteration)
+train_test_splits[1] #Pulling out the first set of training and testing data
 
-
-
-
+################## END Creating Train/Test Data #################
