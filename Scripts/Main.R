@@ -183,6 +183,7 @@ train_test_splits[1] #Pulling out the first set of training and testing data
 ################# Building Model ###################
 
 library(h2o)
+
 h2o.init()
 
 sample_rocv = train_test_splits[[1]]
@@ -190,13 +191,16 @@ sample_rocv = train_test_splits[[1]]
 map(sample_rocv, function(x){
   
   train = sample_rocv$train %>%
-    mutate(incident = factor(incident)) #Converting crimes to categories
+    mutate_at(vars(month:incident), list(as.factor))
+    #mutate(incident = factor(incident)) #Converting crimes to categories
   
   test = sample_rocv$test %>%
-    mutate(incident = factor(incident)) #Converting crimes to categories
+    mutate_at(vars(month:incident), list(as.factor))
+    #mutate(incident = factor(incident)) #Converting crimes to categories
   
   features = train %>%
     select(-crime_count) %>%
+    select(-incident_date) %>%
     colnames()
   
   target = "crime_count"
@@ -207,6 +211,13 @@ map(sample_rocv, function(x){
     training_frame = as.h2o(train),
     validation_frame = as.h2o(test),
     lambda_search = TRUE
+  )
+  
+  model = h2o.gbm(
+    x = features,
+    y = target,
+    training_frame = as.h2o(train),
+    validation_frame = as.h2o(test)
   )
   
   #Performance Metrics
@@ -220,3 +231,21 @@ map(sample_rocv, function(x){
   #Variable Importance
   h2o.varimp(model)
 })
+
+predictions <- h2o.predict(model, newdata = as.h2o(train))
+
+train %>% 
+  mutate(Pred = as.vector(predictions)) %>% 
+  ggplot(aes(x = incident_date, y = crime_count)) + 
+  facet_wrap(~incident) + 
+  geom_line(aes(y = Pred), color = 'blue') + 
+  geom_line(aes(y = crime_count), color = 'red', alpha = 0.5) +
+  labs(title = "Actuals v. Predicted on **training** data using GBM",
+       subtitle = "Actuals in red, predicted in blue") +
+  theme_bw()
+
+train %>%
+  ggplot(aes(x = weekday, y = crime_count)) +
+  facet_wrap(~incident, scales = "free_y") +
+  geom_boxplot()
+
