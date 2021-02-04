@@ -141,32 +141,6 @@ complete_daily_incidents = all_daily_incidents %>%
 recent_daily_incidents = complete_daily_incidents %>%
   filter(incident_date >= '2015-01-01')
 
-# --- Is this part still necessary? Or should I still follow through with this path? ---
-
-# #Split training data by crime
-# crime_splits = split(recent_daily_incidents, recent_daily_incidents$incident)
-# #The code above splits the data frame into multiple tibbles separated by incident
-# 
-# #Applying validation design to each crime individually
-# rocv_by_crime = map2(crime_splits, names(crime_splits), function(df, nm){
-#   train_test_index = rolling_origin(
-#     data = df, #Using recent data from 2015 and later
-#     initial = (365*4), #Using four years for the initial training sample
-#     assess = 14, #Forecast Horizon - how far in the future do I want to predict. 14 days because it allows for staffing adjustments/coverage and still maintains accuracy which you begin to lose the further out your predicting
-#     cumulative = TRUE,
-#     skip = 14 #How large is the window moving forward after each split. IDK why 14 days, does it matter how big the window is?
-#   ) %>%
-#     mutate(Iteration = row_number())
-# })
-# #We use map2 here since we have two arguments, the splits and the name of those splits.
-# #Those are then used in the function following to go through each iteration (crime)
-# 
-# #Combining within-crime ROCV and then split by iteration
-# rocv_by_iteration = rocv_by_crime %>%
-#   bind_rows() %>%
-#   split(.$Iteration)
-# ------------------------------------------------------------------------
-
 #################### ANOTHER WAY TO APPLY ROCV for Train/Test Data ######################
 z_scale = function(x) {
   (x - mean(x))/sd(x) #Creating a function that turns counts in z scores
@@ -199,4 +173,50 @@ train_test_splits = map(rocv_by_crime2$splits, function(split){
 
 train_test_splits[1] #Pulling out the first set of training and testing data
 
+#Creating the training and testing data this way allows for the rolling origin function
+#To be applied to each crime at a specific date rather than going through the entire
+#Long data. The ensures dates are not duplicated and all crimes are represented.
+#This is a more efficient and effective way to create our train/test data.
+
 ################## END Creating Train/Test Data #################
+
+################# Building Model ###################
+
+library(h2o)
+h2o.init()
+
+sample_rocv = train_test_splits[[1]]
+
+map(sample_rocv, function(x){
+  
+  train = sample_rocv$train %>%
+    mutate(incident = factor(incident)) #Converting crimes to categories
+  
+  test = sample_rocv$test %>%
+    mutate(incident = factor(incident)) #Converting crimes to categories
+  
+  features = train %>%
+    select(-crime_count) %>%
+    colnames()
+  
+  target = "crime_count"
+  
+  model = h2o.glm(
+    x = features,
+    y = target,
+    training_frame = as.h2o(train),
+    validation_frame = as.h2o(test),
+    lambda_search = TRUE
+  )
+  
+  #Performance Metrics
+  performance_metrics = h2o.performance(model, valid = TRUE) #}) This was to look at regression metrics
+  
+  performance_metrics_tbl = tibble(
+    RMSE = performance_metrics@metrics$RMSE,
+    R2 = performance_metrics@metrics$r2
+  )
+  
+  #Variable Importance
+  h2o.varimp(model)
+})
