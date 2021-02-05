@@ -316,7 +316,7 @@ map(sample_rocv, function(x){
 ##### GBM has a lower RMSE so we will move forward with that model
 
 ############# Model Implementation ##############
-map(train_test_splits, function(x){
+rocv_models = map(train_test_splits, function(x){
   
   train = x$train %>%
     mutate_at(vars(month:incident), list(as.factor)) #Converting crimes to categories
@@ -372,5 +372,19 @@ map(train_test_splits, function(x){
   return(out)
 })
 
+rocv_df = map2(rocv_models, seq_along(rocv_models), function(model, idx){ #Creates a df of all the rocv models and labeling them with an iteration number
+  
+  out = model %>% mutate(rocv_idx = idx)
+  
+  return(out)
+}) %>%
+  bind_rows()
 
+rocv_df %>%
+  group_by(incident) %>%
+  summarise(N = n(),
+            Avg_MASE = mean(MASE),
+            SD_MASE = sd(MASE),
+            Lower_CI = t.test(MASE)$conf.int[1],
+            Upper_CI = t.test(MASE)$conf.int[2])
 
