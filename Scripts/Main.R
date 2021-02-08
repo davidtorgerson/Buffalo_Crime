@@ -382,6 +382,7 @@ rocv_df = map2(rocv_models, seq_along(rocv_models), function(model, idx){ #Creat
 
 rocv_df %>%
   group_by(incident) %>%
+  filter(MASE != 'Inf') %>%
   summarise(N = n(),
             Avg_MASE = mean(MASE),
             SD_MASE = sd(MASE),
