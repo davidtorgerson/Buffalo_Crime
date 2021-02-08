@@ -6,7 +6,8 @@ library(stringr)
 library(tibble)
 library(purrr)
 library(rsample)
-
+library(tis)
+library(prophet)
 
 ######################### Reading in the Data ####################
 #This Analysis is of crime data in Buffalo, NY
@@ -136,6 +137,13 @@ complete_daily_incidents = all_daily_incidents %>%
   mutate(weekday = wday(incident_date)) %>%
   rename(crime_count = n)
 
+bank_holidays = holidays(seq(2009,2021, 1)) %>%
+  enframe(name = 'Holiday', value = 'Date') %>%
+  mutate(New_Date = as.Date(as.character(Date), '%Y%m%d'))
+
+complete_incidents_with_holidays = left_join(complete_daily_incidents, bank_holidays, by = c("incident_date" = "New_Date")) %>%
+  select(-Date)
+  
 ##Creating Testing Data sets
 #Using last 5 years for training data
 recent_daily_incidents = complete_daily_incidents %>%
