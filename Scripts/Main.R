@@ -328,13 +328,17 @@ rocv_models = map(train_test_splits, function(x){
     select(-crime_count, -incident_date) %>%
     colnames()
   
+  train_h2o = as.h2o(train)
+  
+  test_h2o = as.h2o(test)
+  
   target = "crime_count"
   
   model = h2o.gbm(
     x = features,
     y = target,
-    training_frame = as.h2o(train),
-    validation_frame = as.h2o(test),
+    training_frame = train_h2o,
+    validation_frame = test_h2o,
     ntrees = 50, #How many trees do you want the model to build, Default set at 50
     learn_rate = 0.1, #Default set at 0.1
     max_depth = 5, #Default set at 5
@@ -352,7 +356,7 @@ rocv_models = map(train_test_splits, function(x){
     select(incident_date, incident, Simple = crime_count)
   
   #Predictions from GBM Model
-  predictions = h2o.predict(model, newdata = as.h2o(test)) %>%
+  predictions = h2o.predict(model, newdata = test_h2o) %>%
     as.vector()
   
   #MASE Calculation
@@ -365,6 +369,9 @@ rocv_models = map(train_test_splits, function(x){
       Simple_MAE = mean(abs(Simple - crime_count)) #Getting Mean Average Error for Simple
     ) %>%
     mutate(MASE = GBM_MAE/Simple_MAE) #Calculating MASE
+  
+  #Clean out the h2o cluster.
+  h2o.removeAll()
   
   #Reporting out Metrics
   out = MASE_by_incident
@@ -388,4 +395,8 @@ rocv_df %>%
             SD_MASE = sd(MASE),
             Lower_CI = t.test(MASE)$conf.int[1],
             Upper_CI = t.test(MASE)$conf.int[2])
- 
+
+################### Model Plots ################
+rocv_df %>%
+  ggplot() + geom_line(aes(x = rocv_idx, y = MASE)) +
+  facet_wrap(~ incident)
