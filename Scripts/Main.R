@@ -142,9 +142,19 @@ bank_holidays = holidays(seq(2009,2021, 1)) %>%
   enframe(name = 'Holiday', value = 'Date') %>%
   mutate(New_Date = as.Date(as.character(Date), '%Y%m%d'))
 
-#Joining with crime data.
+#Joining with crime data and creating holiday dummy variables.
 complete_incidents_with_holidays = left_join(complete_daily_incidents, bank_holidays, by = c("incident_date" = "New_Date")) %>%
-  select(-Date)
+  select(-Date) %>%
+  mutate(NewYears = if_else(Holiday != 'NewYears' | is.na(Holiday) == TRUE,0,1)) %>%
+  mutate(MLKing = if_else(Holiday != 'MLKing' | is.na(Holiday) == TRUE, 0,1)) %>%
+  mutate(GWBirthday = if_else(Holiday != 'GWBirthday' | is.na(Holiday) == TRUE, 0,1)) %>%
+  mutate(Memorial = if_else(Holiday != 'Memorial' | is.na(Holiday) == TRUE, 0,1)) %>%
+  mutate(Labor = if_else(Holiday != 'Labor' | is.na(Holiday) == TRUE, 0,1)) %>%
+  mutate(Columbus = if_else(Holiday != 'Columbus' | is.na(Holiday) == TRUE, 0,1)) %>%
+  mutate(Veterans = if_else(Holiday != 'Veterans' | is.na(Holiday) == TRUE, 0,1)) %>%
+  mutate(Thanksgiving = if_else(Holiday != 'Thanksgiving' | is.na(Holiday) == TRUE, 0,1)) %>%
+  mutate(Christmas = if_else(Holiday != 'Christmas' | is.na(Holiday) == TRUE, 0,1)) %>%
+  select(-Holiday)
   
 ##Creating Testing Data sets
 #Using last 5 years for training data
