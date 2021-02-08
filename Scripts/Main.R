@@ -137,10 +137,12 @@ complete_daily_incidents = all_daily_incidents %>%
   mutate(weekday = wday(incident_date)) %>%
   rename(crime_count = n)
 
+#Getting Bank holidays from 2009 to 2021 to incorporate
 bank_holidays = holidays(seq(2009,2021, 1)) %>%
   enframe(name = 'Holiday', value = 'Date') %>%
   mutate(New_Date = as.Date(as.character(Date), '%Y%m%d'))
 
+#Joining with crime data.
 complete_incidents_with_holidays = left_join(complete_daily_incidents, bank_holidays, by = c("incident_date" = "New_Date")) %>%
   select(-Date)
   
