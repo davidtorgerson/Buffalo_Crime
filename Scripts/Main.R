@@ -147,7 +147,9 @@ complete_incidents_with_holidays = left_join(complete_daily_incidents,
   mutate(Holiday = ifelse(is.na(Holiday), "None",Holiday)) %>%
   spread(Holiday, is_Holiday) %>% #Use this to not need multiple mutate functions
   mutate(Easter = isEaster(incident_date)) %>%
-  mutate(Easter = ifelse(Easter == TRUE, 1, NA))
+  mutate(Easter = ifelse(Easter == TRUE, 1, NA)) %>%
+  select(-None) %>%
+  replace(is.na(.),0) #Replacing all NA values with 0
   
 ##Creating Testing Data sets
 #Using last 5 years for training data
@@ -174,10 +176,10 @@ rocv_by_crime2 = recent_daily_incidents_wide %>%
 
 train_test_splits = map(rocv_by_crime2$splits, function(split){
   train = analysis(split) %>% #Using analysis will create our training data
-    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Christmas:Easter) #Converting data back to long format without the date features
+    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Christmas:-Easter) #Converting data back to long format without the date features
 
   test = assessment(split) %>% #Using assessment will create our testing data
-    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Christmas:Easter) #Converting data back to long format without the date features
+    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Christmas:-Easter) #Converting data back to long format without the date features
   
   out = list(train = train, test = test)
   
