@@ -174,10 +174,10 @@ rocv_by_crime2 = recent_daily_incidents_wide %>%
 
 train_test_splits = map(rocv_by_crime2$splits, function(split){
   train = analysis(split) %>% #Using analysis will create our training data
-    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday) #Converting data back to long format without the date features
+    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Christmas:Easter) #Converting data back to long format without the date features
 
   test = assessment(split) %>% #Using assessment will create our testing data
-    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday) #Converting data back to long format without the date features
+    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Christmas:Easter) #Converting data back to long format without the date features
   
   out = list(train = train, test = test)
   
