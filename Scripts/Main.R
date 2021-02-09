@@ -16,7 +16,6 @@ library(prophet)
 
 crime = read_csv("Data/Crime_Incidents.csv")
 
-
 ######################## Cleaning the Data #######################
 
 str(crime)
@@ -45,7 +44,6 @@ crime_clean = crime %>%
          ))
 
 str(crime_clean)
-
 
 ########################### Exploratory Data Analysis ######################
 
@@ -88,7 +86,6 @@ crime_since_2009 %>%
   ggplot() + geom_bar(aes(x = incident), fill = 'purple') +
   coord_flip() #This shows the top crimes are: Larceny/Theft, Assault, Robbery, Burglary, UUV
 
-
 ############## Aggregating data for model building ###################
 
 #Crimes by day and type
@@ -101,7 +98,6 @@ daily_incident_counts %>%
   ggplot() + 
   geom_line(aes(x = incident_date, y = n, color = incident)) +
   facet_wrap(~ incident, scales = "free_y")
-
 
 ##################### Forecasting Model Building ##################
 
@@ -139,26 +135,23 @@ complete_daily_incidents = all_daily_incidents %>%
 
 #Getting Bank holidays from 2009 to 2021 to incorporate
 bank_holidays = holidays(seq(2009,2021, 1)) %>%
-  enframe(name = 'Holiday', value = 'Date') %>%
-  mutate(New_Date = as.Date(as.character(Date), '%Y%m%d'))
+  enframe(name = 'Holiday', value = 'Date') %>% #Creates df out of vector
+  mutate(New_Date = as.Date(as.character(Date), '%Y%m%d')) %>% #Changing YYYYMMDD to YYYY-MM-DD
+  mutate(is_Holiday = 1) #Labels all holidays with a value of 1
 
 #Joining with crime data and creating holiday dummy variables.
-complete_incidents_with_holidays = left_join(complete_daily_incidents, bank_holidays, by = c("incident_date" = "New_Date")) %>%
+complete_incidents_with_holidays = left_join(complete_daily_incidents,
+                                             bank_holidays,
+                                             by = c("incident_date" = "New_Date")) %>%
   select(-Date) %>%
-  mutate(NewYears = if_else(Holiday != 'NewYears' | is.na(Holiday) == TRUE,0,1)) %>%
-  mutate(MLKing = if_else(Holiday != 'MLKing' | is.na(Holiday) == TRUE, 0,1)) %>%
-  mutate(GWBirthday = if_else(Holiday != 'GWBirthday' | is.na(Holiday) == TRUE, 0,1)) %>%
-  mutate(Memorial = if_else(Holiday != 'Memorial' | is.na(Holiday) == TRUE, 0,1)) %>%
-  mutate(Labor = if_else(Holiday != 'Labor' | is.na(Holiday) == TRUE, 0,1)) %>%
-  mutate(Columbus = if_else(Holiday != 'Columbus' | is.na(Holiday) == TRUE, 0,1)) %>%
-  mutate(Veterans = if_else(Holiday != 'Veterans' | is.na(Holiday) == TRUE, 0,1)) %>%
-  mutate(Thanksgiving = if_else(Holiday != 'Thanksgiving' | is.na(Holiday) == TRUE, 0,1)) %>%
-  mutate(Christmas = if_else(Holiday != 'Christmas' | is.na(Holiday) == TRUE, 0,1)) %>%
-  select(-Holiday)
+  mutate(Holiday = ifelse(is.na(Holiday), "None",Holiday)) %>%
+  spread(Holiday, is_Holiday) %>% #Use this to not need multiple mutate functions
+  mutate(Easter = isEaster(incident_date)) %>%
+  mutate(Easter = ifelse(Easter == TRUE, 1, NA))
   
 ##Creating Testing Data sets
 #Using last 5 years for training data
-recent_daily_incidents = complete_daily_incidents %>%
+recent_daily_incidents = complete_incidents_with_holidays %>% #Was complete_daily_incidents
   filter(incident_date >= '2015-01-01')
 
 #################### ANOTHER WAY TO APPLY ROCV for Train/Test Data ######################
