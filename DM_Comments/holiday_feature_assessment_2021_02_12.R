@@ -1,4 +1,7 @@
 
+
+## Run Main.R up to the point of train_test_splits
+
 library(h2o)
 h2o.init()
 
