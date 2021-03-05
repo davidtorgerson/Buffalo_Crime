@@ -109,7 +109,7 @@ seq_dates = seq.Date(
   by = 1) %>%
   enframe(name = NULL, value = "incident_date")
 
-all_daily_incidents <- daily_incident_counts %>%
+all_daily_incidents = daily_incident_counts %>%
   split(.$incident) %>%
   map(., function(i) {
     left_join(
@@ -204,17 +204,15 @@ train_test_splits[1] #Pulling out the first set of training and testing data
 
 ################## END Creating Train/Test Data #################
 
-####################################################
-################# Building Model ###################
-####################################################
+
+#################################################
+############# Model Implementation ##############
+################################################
 
 library(h2o)
 
 h2o.init()
 
-#################################################
-############# Model Implementation ##############
-################################################
 rocv_models = map(train_test_splits, function(x){
   
   train = x$train %>%
@@ -296,9 +294,14 @@ rocv_df %>%
             Upper_CI = t.test(MASE)$conf.int[2])
 
 ################### Model Plots ################
+
+# MASE Statistic by ROCV Iteration #
 rocv_df %>%
-  ggplot() + geom_line(aes(x = rocv_idx, y = MASE)) +
-  facet_wrap(~ incident)
+  ggplot() + geom_line(aes(x = rocv_idx, y = MASE, color = incident)) +
+  facet_wrap(~ incident) +
+  xlab("ROCV Iteration") +
+  ylab("MASE") +
+  ggtitle("MASE for each ROCV Iteration by Incident Type")
 
 
 
