@@ -293,15 +293,8 @@ rocv_df %>%
             Lower_CI = t.test(MASE)$conf.int[1],
             Upper_CI = t.test(MASE)$conf.int[2])
 
-################### Model Plots ################
 
-# MASE Statistic by ROCV Iteration #
-rocv_df %>%
-  ggplot() + geom_line(aes(x = rocv_idx, y = MASE, color = incident)) +
-  facet_wrap(~ incident) +
-  xlab("ROCV Iteration") +
-  ylab("MASE") +
-  ggtitle("MASE for each ROCV Iteration by Incident Type")
+
 
 
 
