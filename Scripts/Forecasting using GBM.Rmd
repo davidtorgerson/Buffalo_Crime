@@ -1,0 +1,48 @@
+---
+title: "Forecasting using GBM"
+author: "David Torgerson & Danny Morris"
+date: "3/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This project looks at trying to forecast crime rates in Buffalo, NY. The data used for this analysis can be located here:https://data.buffalony.gov/Public-Safety/Crime-Incidents/d6g9-xbgu . The analysis involves multiple data science practices including, data extraction, data cleaning, model building and model tuning. 
+
+# Libraries Needed
+```{Libraries}
+library(tidyverse)
+library(lubridate)
+library(stringr)
+library(tibble)
+library(purrr)
+library(rsample)
+library(tis)
+```
+
+# Reading in the Data
+
+For this particular analysis, I had downloaded the data as an excel file from the buffalony.gov website and saved it in a memorable folder.
+
+```{Data}
+crime = read_csv("Data/Crime_Incidents.csv")
+```
+
+# Cleaning the Data
+
+There were some minor issues with the data that needed to be fixed. Some dates needed to be corrected, missing values filled in, need consistent formatting throughout a variable.
+
+```{Data Cleaning}
+
+crime_clean = crime %>%
+  mutate(address_1 = toupper(address_1)) %>%
+  mutate(incident_datetime = mdy_hms(incident_datetime)) %>%
+  mutate(incident_type_primary = toupper(incident_type_primary)) %>%
+  mutate(day_of_week = str_to_sentence(day_of_week))
+```
+
+After the initial round of cleaning, we noticed that there were still some problems. We had some outlier years that needed to be removed,
