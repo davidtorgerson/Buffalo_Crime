@@ -111,3 +111,19 @@ rocv_models2 = map(train_test_splits, function(x){
   
   return(out)
 })
+
+## MASE Assessment ##
+
+rocv_mase = map2(rocv_models2, seq_along(rocv_models2), function(model, idx){
+  out = model$MASE_by_incident %>% mutate(rocv_idx = idx)
+  return(out)
+}) %>%
+  bind_rows()
+
+# T-test comparing MASE statistics for Holiday and No_Holiday features
+rocv_mase %>%
+  filter(Holidays_MASE != 'Inf' & No_Holidays_MASE != "Info") %>%
+  select(incident, Holidays_MASE, No_Holidays_MASE) %>%
+  gather(Features, MASE, -incident) %>%
+  group_by(incident) %>%
+  rstatix::pairwise_t_test(MASE ~ Features)
