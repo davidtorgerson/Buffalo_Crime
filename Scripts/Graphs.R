@@ -25,3 +25,13 @@ ggplot(Average_MASE_graph, aes(x = Measure, y = value, fill = Measure)) +
   facet_wrap(~ incident) +
   scale_fill_brewer(palette = "Set1")
   
+# Table of hyperparameter tuning # (gbm_tuning)
+library(knitr)
+library(kableExtra)
+
+best_params2 = best_params %>%
+  select(col_sample_rate, learn_rate, sample_rate, rmse) 
+
+kable(best_params2, format = "html") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped","condensed"))
