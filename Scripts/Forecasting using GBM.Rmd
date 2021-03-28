@@ -90,9 +90,9 @@ complete_daily_incidents = all_daily_incidents %>%
 
 #Getting Bank holidays from 2009 to 2021 to incorporate
 bank_holidays = holidays(seq(2009,2021, 1)) %>%
-  enframe(name = 'Holiday', value = 'Date') %>% #Creates df out of vector
-  mutate(New_Date = as.Date(as.character(Date), '%Y%m%d')) %>% #Changing YYYYMMDD to YYYY-MM-DD
-  mutate(is_Holiday = 1) #Labels all holidays with a value of 1
+  enframe(name = 'Holiday', value = 'Date') %>%
+  mutate(New_Date = as.Date(as.character(Date), '%Y%m%d')) %>%
+  mutate(is_Holiday = 1)
 
 #Joining with crime data and creating holiday dummy variables.
 complete_incidents_with_holidays = left_join(complete_daily_incidents,
@@ -100,11 +100,11 @@ complete_incidents_with_holidays = left_join(complete_daily_incidents,
                                              by = c("incident_date" = "New_Date")) %>%
   select(-Date) %>%
   mutate(Holiday = ifelse(is.na(Holiday), "None",Holiday)) %>%
-  spread(Holiday, is_Holiday) %>% #Use this to not need multiple mutate functions
+  spread(Holiday, is_Holiday) %>% 
   mutate(Easter = isEaster(incident_date)) %>%
   mutate(Easter = ifelse(Easter == TRUE, 1, NA)) %>%
   select(-None) %>%
-  replace(is.na(.),0) #Replacing all NA values with 0
+  replace(is.na(.),0) 
   
 #Adding a 'Holidays' tag to filter out Holidays to compare models
 tag_columns = function(x, prefix) {
@@ -152,7 +152,7 @@ train_test_splits = map(rocv_by_crime2$splits, function(split){
 
 # Model Implementation
 
-Next, we used h2o to build our gradient-boosted machine (GBM) model. This model performed the best against standard linear regression and random forest models. The GBM is being tested against a "simple model". Our Simple model states that we'll use the information from the last 14 days to make a prediction about what will happen next. The t-test shows that our model performs better on 6/9 of the incidents. 
+Next, we used h2o to build our gradient-boosted machine (GBM) model. This model performed the best against standard linear regression and random forest models. The GBM is being tested against a "simple model". Our Simple model states that we'll use the information from the last 14 days to make a prediction about what will happen next. After comparing the two methods, the GBM performs better on 6/9 of the incidents.
 
 ```{Model Building}
 
@@ -163,10 +163,10 @@ h2o.init()
 rocv_models = map(train_test_splits, function(x){
   
   train = x$train %>%
-    mutate_at(vars(month:incident), list(as.factor)) #Converting crimes to categories
+    mutate_at(vars(month:incident), list(as.factor))
   
   test = x$test %>%
-    mutate_at(vars(month:incident), list(as.factor)) #Converting crimes to categories
+    mutate_at(vars(month:incident), list(as.factor))
   
   features = train %>%
     select(-crime_count, -incident_date) %>%
@@ -183,20 +183,20 @@ rocv_models = map(train_test_splits, function(x){
     y = target,
     training_frame = train_h2o,
     validation_frame = test_h2o,
-    ntrees = 50, #How many trees do you want the model to build, Default set at 50
-    learn_rate = 0.1, #Default set at 0.1
-    max_depth = 5, #Default set at 5
-    categorical_encoding = "AUTO", #Default set at AUTO
-    distribution = "poisson" #Used for non-negative count data
+    ntrees = 50,
+    learn_rate = 0.1,
+    max_depth = 5,
+    categorical_encoding = "AUTO",
+    distribution = "poisson" 
 )
   
   #Simple Predictions Calculation
   simple_model = train %>%
-    arrange(incident, incident_date) %>% #Sorting by incident and date
+    arrange(incident, incident_date) %>% 
     group_by(incident) %>%
-    slice(tail(row_number(), 14)) %>% #Grab the last 14 rows of each incident
+    slice(tail(row_number(), 14)) %>%
     ungroup() %>%
-    mutate(incident_date = incident_date + days(14)) %>% #Adding 14 days to merge with testing data
+    mutate(incident_date = incident_date + days(14)) %>%
     select(incident_date, incident, Simple = crime_count)
   
   #Predictions from GBM Model
@@ -205,14 +205,14 @@ rocv_models = map(train_test_splits, function(x){
   
   #MASE Calculation
   MASE_by_incident = test %>%
-    mutate(Predictions = predictions) %>% #Adding predictions from gbm 
-    inner_join(simple_model, by = c("incident","incident_date")) %>% #adding simple predictions
+    mutate(Predictions = predictions) %>% 
+    inner_join(simple_model, by = c("incident","incident_date")) %>%
     group_by(incident) %>%
     summarise(
-      GBM_MAE = mean(abs(Predictions - crime_count)), #Getting Mean Average Error for GBM
-      Simple_MAE = mean(abs(Simple - crime_count)) #Getting Mean Average Error for Simple
+      GBM_MAE = mean(abs(Predictions - crime_count)),
+      Simple_MAE = mean(abs(Simple - crime_count))
     ) %>%
-    mutate(MASE = GBM_MAE/Simple_MAE) #Calculating MASE
+    mutate(MASE = GBM_MAE/Simple_MAE)
   
   #Clean out the h2o cluster.
   h2o.removeAll()
@@ -223,7 +223,7 @@ rocv_models = map(train_test_splits, function(x){
   return(out)
 })
 
-rocv_df = map2(rocv_models, seq_along(rocv_models), function(model, idx){ #Creates a df of all the rocv models and labeling them with an iteration number
+rocv_df = map2(rocv_models, seq_along(rocv_models), function(model, idx){
   
   out = model %>% mutate(rocv_idx = idx)
   
@@ -239,4 +239,105 @@ rocv_df %>%
             SD_MASE = sd(MASE),
             Lower_CI = t.test(MASE)$conf.int[1],
             Upper_CI = t.test(MASE)$conf.int[2])
+```
+
+# Model Improvements - Hyperparameter Tuning
+
+After running the model, we tried to improve our model by hyperparameter tuning with grid search. Doing this allows the model to run through several different input values and then we can look at the performance of each set of parameters. 
+
+```{Hyperparameter Tuning}
+library(h2o)
+
+h2o.init()
+
+rocv_tuning = map(train_test_splits, function(x){
+  
+  train = x$train %>%
+    mutate_at(vars(month:incident), list(as.factor))
+  
+  test = x$test %>%
+    mutate_at(vars(month:incident), list(as.factor))
+  
+  features = train %>%
+    select(-crime_count, -incident_date) %>%
+    colnames()
+  
+  train_h2o = as.h2o(train)
+  
+  test_h2o = as.h2o(test)
+  
+  target = "crime_count"
+  
+  gbm_params = list(
+    learn_rate = c(0.01,0.1),
+    max_depth = c(3,5,9),
+    sample_rate = c(0.8,1.0),
+    col_sample_rate = c(0.2,0.5,1.0)
+  )
+  
+  gbm_grid = h2o.grid("gbm", x = features, y = target,
+                      training_frame = train_h2o,
+                      validation_frame = test_h2o,
+                      ntrees = 15,
+                      seed = 1,
+                      hyper_params = gbm_params)
+  
+  gbm_grid_sort = h2o.getGrid(grid_id = gbm_grid@grid_id,
+                              sort_by = "rmse",
+                              decreasing = TRUE)
+  
+  best_model_id = gbm_grid_sort@model_ids[[1]]
+  
+  best_gbm = h2o.getModel(best_model_id)
+  
+  best_params = gbm_grid_sort@summary_table %>%
+    as_tibble() %>%
+    mutate_at(vars(-model_ids), list(as.numeric)) %>%
+    filter(model_ids == best_model_id)
+  
+  worst_params = gbm_grid_sort@summary_table %>%
+    as_tibble() %>%
+    mutate_at(vars(-model_ids), list(as.numeric)) %>%
+    arrange(desc(rmse)) %>%
+    slice(1)
+  
+  other_params_not_tuned = best_gbm@model$model_summary %>%
+    as_tibble() %>%
+    select(-any_of(colnames(best_params)))
+  
+  best_params_with_metrics = best_params %>%
+    bind_cols(other_params_not_tuned)
+  
+  #Clean out the h2o cluster.
+  h2o.removeAll()
+  
+  #Reporting out Metrics
+  out = list(best_params_with_metrics = best_params_with_metrics,
+             worst_params = worst_params)
+  
+  return(out)
+})
+
+best_params = map(rocv_tuning, function(x) x[["best_params_with_metrics"]]) %>%
+  bind_rows() %>%
+  unite(col = "Param_String", col_sample_rate:sample_rate, remove = F)
+
+most_frequent_best_params = best_params %>%
+  count(Param_String) %>%
+  filter(n == max(n))
+
+best_params %>%
+  semi_join(most_frequent_best_params, by = "Param_String") %>%
+  select(col_sample_rate:sample_rate, number_of_trees, min_depth) %>%
+  distinct()
+
+library(knitr)
+library(kableExtra)
+
+best_params2 = best_params %>%
+  select(col_sample_rate, learn_rate, sample_rate, rmse) 
+
+kable(best_params2, format = "html") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped","condensed"))
 ```
