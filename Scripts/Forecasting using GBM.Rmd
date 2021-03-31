@@ -1,7 +1,7 @@
 ---
-title: "Forecasting using GBM"
+title: "Building a Forecasting Model using GBM"
 author: "David Torgerson & Danny Morris"
-date: "3/19/2021"
+date: "3/31/2021"
 output: html_document
 ---
 
