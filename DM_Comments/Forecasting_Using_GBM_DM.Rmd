@@ -1,0 +1,303 @@
+---
+title: "Building a High-Performance Forecasting Model using R and H2O"
+author: "David Torgerson"
+date: "3/31/2021"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 1
+editor_options: 
+  chunk_output_type: console
+---
+
+## Summary of changes
+
+- More informative and catchy title
+- `knitr::opts_chunk$set(message = F, warning = F)` to suppress annoying printouts
+- `sessionInfo()` at the bottom to communicate your R version, OS, and packages
+- Code chunks should start with ` ```r` `
+- Improve the introduction by directly stating the what, why, and how of the project to help the reader understand what to expect.
+- Include `library(h2o)` in the Packages section and remove individual `tidyverse` packages. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, eval=F)
+```
+
+# Introduction
+
+This document explains the high performance regression model I built to forecast daily crimes in Buffalo, NY. I took on this challenging personal project to improve my data science skills including R programming, data manipulation, scalable machine learning with H2O, and Git collaboration.
+
+Unlike typical forecasting problems which are univariate in nature, I decided to tackle multivariate forecasting by building a single regression model (with feature engineering) that makes forecasts for 6 different crime categories. I used the Gradient Boosted Machine algorithm in the H2O library. To test and improve the model, I implemented rolling origin cross validation, hyperparameter tuning (grid search), and standard error metrics including Mean Absolute Scaled Error (MASE) and Root Mean Squared Error (RMSE).
+
+# R Packages
+
+Package versions can be found at the bottom of the document under [Session Information](#session-info)
+
+```{r}
+library(tidyverse)  # collection of libraries for data manipulation and analysis
+library(lubridate)  # functions for working with dates
+library(rsample)    # functions for rolling origin cross validation
+library(tis)        # contains US holidays dataset
+library(h2o)        # high performance machine learning framework
+library(DT)         # rendering tables as HTML
+```
+
+# Reading in the Data
+
+A CSV copy of the data used for this analysis can be found here: https://data.buffalony.gov/Public-Safety/Crime-Incidents/d6g9-xbgu 
+
+```{r}
+crime = read_csv("Data/Crime_Incidents.csv")
+```
+
+# Cleaning the Data
+
+There were some minor issues with the data that needed to be fixed, including: 
+
+* Convert dates from String to Date type
+* Standardize text fields (e.g. Theft -> THEFT)
+* Remove data prior to 2009 due to unreliable data quality ([Source](https://data.buffalony.gov/Public-Safety/Crime-Incidents/d6g9-xbgu))
+* Remove crime categories with very few observations
+
+```{r}
+crime_clean = crime %>%
+  mutate(incident_datetime = mdy_hms(incident_datetime)) %>%
+  mutate(incident_date = as.Date(incident_datetime)) %>%
+  mutate(incident_type_primary = toupper(incident_type_primary)) %>%
+  mutate(day_of_week = str_to_sentence(day_of_week)) %>%
+  mutate(incident = case_when(
+    incident_type_primary %in% c('THEFT OF SERVICES','THEFT OF VEHICLE', 'LARCENY/THEFT') ~ 'THEFT', 
+    incident_type_primary %in% c('AGG ASSAULT ON P/OFFICER', 'AGGR ASSAULT') ~ 'ASSAULT',
+    incident_type_primary %in% c('SEXUAL ABUSE', 'RAPE') ~ 'SEXUAL ABUSE/RAPE', 
+    TRUE ~ incident_type_primary)
+  ) %>%
+  filter(incident_date >= '2015-01-01') %>%
+  filter(incident %in% c("ASSAULT", "BURGLARY", "THEFT", "ROBBERY", "UUV", "SEXUAL ABUSE/RAPE"))
+# filter(!incident %in% c('BREAKING & ENTERING','HOMICIDE','CRIM NEGLIGENT HOMICIDE',
+#                         'MANSLAUGHTER','OTHER SEXUAL OFFENSE','SEXUAL ASSAULT')) 
+```
+
+# Aggregating the data to daily crime counts
+
+Using clean data, I aggregated the data to include daily counts of crimes by crime category (incident). 
+
+```{r}
+daily_incidents = crime_clean %>%
+  count(incident_date, incident) %>%
+  rename(crime_count = n) %>%
+  arrange(incident, incident_date)
+
+daily_incidents %>%
+  count(incident)
+```
+
+Analysis of the aggregated data revealed the absence of dates for some incident types. I presume that missing dates implies zero crimes, so I imputed missing dates and assigned a value of 0 for the crime count.
+
+```{r}
+# continuous sequence of dates between min and max dates in the data
+# used to impute missing dates in the daily_incidents dataframe
+seq_dates = seq.Date(
+  from = min(daily_incidents$incident_date),
+  to = max(daily_incidents$incident_date),
+  by = 1
+) %>%
+  enframe(name = NULL, value = "incident_date")
+
+# daily incidents with missing dates imputed with a value of 0
+daily_incidents_complete = daily_incidents %>%
+  split(.$incident) %>%
+  map(., function(i) {
+    left_join(
+      x = seq_dates,
+      y = i,
+      by = "incident_date"
+    ) %>%
+      fill(incident, .direction = "downup") %>%
+      replace_na(list(crime_count = 0))
+  }) %>%
+  bind_rows()
+
+# visualization of daily incidents
+daily_incidents_complete %>%
+  ggplot(aes(x = incident_date, y = crime_count)) +
+  facet_wrap(~incident, scales = "free_y") +
+  geom_line()
+```
+
+# Feature engineering
+
+```{r}
+#Extracting the other date-based data features
+date_features = daily_incidents_complete %>%
+  mutate(month = lubridate::month(incident_date)) %>%
+  mutate(year = lubridate::year(incident_date)) %>%
+  mutate(week = lubridate::week(incident_date)) %>%
+  mutate(weekday = lubridate::wday(incident_date))
+
+# US Bank holidays from 2009 to 2021 to incorporate
+bank_holidays = tis::holidays(seq(2009,2021, 1)) %>%
+  enframe(name = 'Holiday', value = 'Date') %>%
+  mutate(Date = as.Date(as.character(Date), '%Y%m%d')) %>%
+  mutate(is_Holiday = 1)
+
+#Joining with crime data and creating holiday dummy variables.
+complete_features = left_join(
+  date_features,
+  bank_holidays,
+  by = c("incident_date" = "Date")
+) %>%
+  replace_na(list(Holiday = "None")) %>%
+  spread(Holiday, is_Holiday) %>% 
+  mutate(Easter = isEaster(incident_date)) %>%
+  mutate(Easter = ifelse(Easter == TRUE, 1, NA)) %>%
+  select(-None) %>%
+  replace(is.na(.),0) 
+
+#Adding a 'Holidays' tag to filter out Holidays to compare models
+tag_columns = function(x, prefix) {
+  paste(prefix, x, sep = "_")
+}
+
+complete_features_with_holiday_tag = complete_features %>%
+  rename_at(vars(Christmas:Easter), list(~tag_columns(x = ., prefix = 'Holiday')))
+
+str(complete_features_with_holiday_tag)
+```
+
+# Training and Testing Data
+
+When building a forecasting model, we needed to separate out a training and testing data set. 
+
+```{Training/Testing data}
+
+recent_daily_incidents_wide = recent_daily_incidents %>%
+  spread(incident, crime_count)
+
+rocv_by_crime2 = recent_daily_incidents_wide %>%
+  rolling_origin(
+    data = .,
+    initial = (365*4),
+    assess = 14,
+    cumulative = TRUE,
+    skip = 14 
+  )
+
+train_test_splits = map(rocv_by_crime2$splits, function(split){
+  train = analysis(split) %>%
+    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Holiday_Christmas:-Holiday_Easter)
+  
+  test = assessment(split) %>%
+    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Holiday_Christmas:-Holiday_Easter)
+  
+  out = list(train = train, test = test)
+  
+  return(out)
+})
+
+```
+
+# Model Implementation
+
+Next, we used h2o to build our gradient-boosted machine (GBM) model. This model performed the best against standard linear regression and random forest models. The GBM is being tested against a "simple model". Our Simple model states that we'll use the information from the last 14 days to make a prediction about what will happen next.
+
+```{Model Building}
+
+library(h2o)
+
+h2o.init()
+
+rocv_models = map(train_test_splits, function(x){
+  
+  train = x$train %>%
+    mutate_at(vars(month:incident), list(as.factor))
+  
+  test = x$test %>%
+    mutate_at(vars(month:incident), list(as.factor))
+  
+  features = train %>%
+    select(-crime_count, -incident_date) %>%
+    colnames()
+  
+  train_h2o = as.h2o(train)
+  
+  test_h2o = as.h2o(test)
+  
+  target = "crime_count"
+  
+  model = h2o.gbm(
+    x = features,
+    y = target,
+    training_frame = train_h2o,
+    validation_frame = test_h2o,
+    ntrees = 50,
+    learn_rate = 0.1,
+    max_depth = 5,
+    categorical_encoding = "AUTO",
+    distribution = "poisson" 
+  )
+  
+  #Simple Predictions Calculation
+  simple_model = train %>%
+    arrange(incident, incident_date) %>% 
+    group_by(incident) %>%
+    slice(tail(row_number(), 14)) %>%
+    ungroup() %>%
+    mutate(incident_date = incident_date + days(14)) %>%
+    select(incident_date, incident, Simple = crime_count)
+  
+  #Predictions from GBM Model
+  predictions = h2o.predict(model, newdata = test_h2o) %>%
+    as.vector()
+  
+  #MASE Calculation
+  MASE_by_incident = test %>%
+    mutate(Predictions = predictions) %>% 
+    inner_join(simple_model, by = c("incident","incident_date")) %>%
+    group_by(incident) %>%
+    summarise(
+      GBM_MAE = mean(abs(Predictions - crime_count)),
+      Simple_MAE = mean(abs(Simple - crime_count))
+    ) %>%
+    mutate(MASE = GBM_MAE/Simple_MAE)
+  
+  #Clean out the h2o cluster.
+  h2o.removeAll()
+  
+  #Reporting out Metrics
+  out = MASE_by_incident
+  
+  return(out)
+})
+
+rocv_df = map2(rocv_models, seq_along(rocv_models), function(model, idx){
+  
+  out = model %>% mutate(rocv_idx = idx)
+  
+  return(out)
+}) %>%
+  bind_rows()
+
+rocv_df %>%
+  group_by(incident) %>%
+  filter(MASE != 'Inf') %>%
+  summarise(N = n(),
+            Avg_MASE = mean(MASE),
+            SD_MASE = sd(MASE),
+            Lower_CI = t.test(MASE)$conf.int[1],
+            Upper_CI = t.test(MASE)$conf.int[2])
+```
+
+# Conclusion
+
+We can conclude from the final output above, that our model performed better than just our simple model in 5/9 of the incidents. 
+
+# Next Steps
+
+Next steps in this analysis would include hyperparameter tuning and looking to see if there is any difference in crime on holidays.
+
+# Session Information {#session-info}
+
+```{r}
+sessionInfo()
+```
