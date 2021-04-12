@@ -1,71 +1,100 @@
 ---
-title: "Building a Forecasting Model using GBM"
-author: "David Torgerson & Danny Morris"
+title: "Building a High-Performing Forecasting Model using R and H2O"
+author: "David Torgerson"
 date: "3/31/2021"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 1
+  editor_options:
+    chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = F, warning = F)
 ```
 
-## Introduction
+# Introduction
 
-This project looks at trying to forecast crime rates in Buffalo, NY. The data used for this analysis can be located here:https://data.buffalony.gov/Public-Safety/Crime-Incidents/d6g9-xbgu . The analysis involves multiple data science practices including, data extraction, data cleaning, model building and model tuning. 
+This document expalins a high-performance regression model I built to forecast daily crimes
+in Buffalo, NY. This was an exciting challenge that helped improve my data science skills
+including: R Programming, data manipulation/cleaning, scalable machine learning with H2O, 
+and Git callaboration. 
 
-# Libraries Needed
-```{Libraries}
+Unlike typical forecasting problems which are univariate in nature, I decided to tackle multivariate forecasting by building a single regression model that makes forecasts for 6 difference crime categories. I used the Gradient Boosted Machine (GBM) algorithm from the H2O library. To test and improve the model, I implemented rolling origin cross validation, hyperparameter tuning using grid search, and standard error metrics including Mean Absolute Scaled Error (MASE) and Root Mean Squared Error (RMSE).
+
+# R Libraries
+
+Package versions can be found at the bottom of the document under [Session Information]
+```{r}
 library(tidyverse)
-library(lubridate)
-library(stringr)
-library(tibble)
-library(purrr)
 library(rsample)
 library(tis)
+library(h2o)
+library(DT)
+library(lubridate)
 ```
 
 # Reading in the Data
 
-For this particular analysis, I had downloaded the data as an excel file from the buffalony.gov website and saved it in a memorable folder.
+A CSV version of the data can be obtained here:  https://data.buffalony.gov/Public-Safety/Crime-Incidents/d6g9-xbgu 
 
-```{Data}
+```{r}
 crime = read_csv("Data/Crime_Incidents.csv")
 ```
 
 # Cleaning the Data
 
-There were some minor issues with the data that needed to be fixed. Some dates needed to be corrected, missing values filled in, need consistent formatting throughout a variable. After the initial round of cleaning, we noticed that there were still some problems. We had some outlier years that needed to be removed, needed to standardize the incident variables, and then remove any incidents that have very few observations.
+There were some minor issues with the data that needed to be fixed, inclduing:
+- Convert dates from string to date types
+- Standardize text fields
+- Remove older data to unreliable data quality
+- Remove crime categories with minimal observations
 
-```{Data Cleaning}
-
+```{r}
 crime_clean = crime %>%
-  mutate(address_1 = toupper(address_1)) %>%
   mutate(incident_datetime = mdy_hms(incident_datetime)) %>%
+  mutate(incident_date = as.Date(incident_datetime)) %>%
   mutate(incident_type_primary = toupper(incident_type_primary)) %>%
-  mutate(day_of_week = str_to_sentence(day_of_week))
-
-crime_since_2009 = crime_clean %>%
-  filter(year(incident_datetime) >= '2009') %>%
+  mutate(day_of_week = str_to_sentence(day_of_week)) %>%
   mutate(incident = case_when(
-    incident_type_primary %in% c('THEFT OF SERVICES','THEFT OF VEHICLE') ~ 'THEFT', #Aggregating crimes
-    incident_type_primary %in% c('AGG ASSAULT ON P/OFFICER', 'AGGR ASSAULT') ~ 'ASSAULT', #Aggregating crimes
-    TRUE ~ incident_type_primary)) %>%
-  filter(!incident %in% c('BREAKING & ENTERING','HOMICIDE','CRIM NEGLIGENT HOMICIDE',
-                       'MANSLAUGHTER','OTHER SEXUAL OFFENSE','SEXUAL ASSAULT')) 
+    incident_type_primary %in% c('THEFT OF SERVICES','THEFT OF VEHICLE', 'LARCENY/THEFT') ~ 'THEFT', 
+    incident_type_primary %in% c('AGG ASSAULT ON P/OFFICER', 'AGGR ASSAULT') ~ 'ASSAULT',
+    incident_type_primary %in% c('SEXUAL ABUSE', 'RAPE') ~ 'SEXUAL ABUSE/RAPE', 
+    TRUE ~ incident_type_primary)
+  ) %>%
+  filter(incident_date >= '2015-01-01') %>%
+  filter(incident %in% c("ASSAULT", "BURGLARY", "THEFT", "ROBBERY", "UUV", "SEXUAL ABUSE/RAPE"))
 ```
 
-# Prepping the data for modeling
+# Aggregating the data to daily crime counts
 
-Once the data has been cleaned, we started prepping the data for modeling. We had to make sure there was no skip in dates and to do that we made a dates data frame to map to the cleaned data.
+Now having clean data, I aggregated the data to include daily counts of crimes by category(incident)
 
-```{Data Prep}
+```{r}
+daily_incidents = crime_clean %>%
+  count(incident_date, incident) %>%
+  rename(crime_count = n) %>%
+  arrange(incident, incident_date)
+
+daily_incidents %>%
+  count(incident)
+```
+
+Analysis of the aggregated data revealed the absence of dates for some incident types. I presume that missing dates implies zero crimes, so I imputed missing dates and assigned a value of 0 for the crime count.
+
+```{r}
+# Creating a sequence of dates to ensure there are no missing dates.
 seq_dates = seq.Date(
-  from = as.Date("2009-01-01"),
-  to = as.Date("2021-01-24"),
-  by = 1) %>%
+  from = min(daily_incidents$incident_date),
+  to = max(daily_incidents$incident_date),
+  by = 1
+) %>%
   enframe(name = NULL, value = "incident_date")
 
-all_daily_incidents = daily_incident_counts %>%
+# Anything with a missing date will have a value of 0.
+daily_incidents_complete = daily_incidents %>%
   split(.$incident) %>%
   map(., function(i) {
     left_join(
@@ -74,111 +103,124 @@ all_daily_incidents = daily_incident_counts %>%
       by = "incident_date"
     ) %>%
       fill(incident, .direction = "downup") %>%
-      replace_na(list(n = 0))
+      replace_na(list(crime_count = 0))
   }) %>%
   bind_rows()
-#The code above splits the dataframe by incidents map the dates together
-#Filling in all the missing dates with a count of 0
-#Assumption: If date is missing from original data, that incident did not occur (count of 0)
 
-#Extracting the other date-based data features
-complete_daily_incidents = all_daily_incidents %>%
-  mutate(month = month(incident_date)) %>%
-  mutate(year = year(incident_date)) %>%
-  mutate(week = week(incident_date)) %>%
-  mutate(weekday = wday(incident_date)) %>%
-  rename(crime_count = n)
+# visualization of daily incidents
+daily_incidents_complete %>%
+  ggplot(aes(x = incident_date, y = crime_count)) +
+  facet_wrap(~incident, scales = "free_y") +
+  geom_line()
+```
 
-#Getting Bank holidays from 2009 to 2021 to incorporate
-bank_holidays = holidays(seq(2009,2021, 1)) %>%
-  enframe(name = 'Holiday', value = 'Date') %>%
-  mutate(New_Date = as.Date(as.character(Date), '%Y%m%d')) %>%
-  mutate(is_Holiday = 1)
+# Feature engineering
 
-#Joining with crime data and creating holiday dummy variables.
-complete_incidents_with_holidays = left_join(complete_daily_incidents,
-                                             bank_holidays,
-                                             by = c("incident_date" = "New_Date")) %>%
-  select(-Date) %>%
-  mutate(Holiday = ifelse(is.na(Holiday), "None",Holiday)) %>%
-  spread(Holiday, is_Holiday) %>% 
-  mutate(Easter = isEaster(incident_date)) %>%
-  mutate(Easter = ifelse(Easter == TRUE, 1, NA)) %>%
-  select(-None) %>%
-  replace(is.na(.),0) 
-  
-#Adding a 'Holidays' tag to filter out Holidays to compare models
+Features that were tested in the model are:
+
+- Date-based features for a given date (i.e. month, year, week, weekday)
+- US holiday indicators
+
+```{r}
+# Function to "tag" features to easily include/exclude indicators from the model
 tag_columns = function(x, prefix) {
   paste(prefix, x, sep = "_")
 }
 
-complete_incidents_with_holiday_tag = complete_incidents_with_holidays %>%
-  rename_at(vars(-incident_date:-weekday), list(~tag_columns(x = ., prefix = 'Holiday')))
+# Date-based features
+date_features = daily_incidents_complete %>%
+  mutate(month = lubridate::month(incident_date)) %>%
+  mutate(year = lubridate::year(incident_date)) %>%
+  mutate(week = lubridate::week(incident_date)) %>%
+  mutate(weekday = lubridate::wday(incident_date))
 
-recent_daily_incidents = complete_incidents_with_holiday_tag %>% #Was complete_daily_incidents
-  filter(incident_date >= '2015-01-01')
+# US Bank holidays 
+bank_holidays = tis::holidays(years = seq(2015, 2021, 1)) %>%
+  enframe(name = 'Holiday', value = 'Date') %>%
+  mutate(Date = as.Date(as.character(Date), '%Y%m%d')) %>%
+  mutate(is_Holiday = 1)
+
+# Joining holiday dummy features with original data
+complete_features = left_join(
+  date_features,
+  bank_holidays,
+  by = c("incident_date" = "Date")
+) %>%
+  replace_na(list(Holiday = "None")) %>%
+  spread(Holiday, is_Holiday) %>% 
+  mutate(Easter = isEaster(incident_date)) %>%
+  mutate(Easter = ifelse(Easter == TRUE, 1, 0)) %>%
+  select(-None) %>%
+  replace(is.na(.),0) 
+
+complete_features_with_tags = complete_features %>%
+  rename_at(vars(month:weekday), list(~tag_columns(x = ., prefix = 'Date'))) %>%
+  rename_at(vars(Christmas:Easter), list(~tag_columns(x = ., prefix = 'Holiday'))) 
+
+str(complete_features_with_tags)
 ```
 
-# Training and Testing Data
+# Preparing cross validation
 
-When building a forecasting model, we needed to separate out a training and testing data set. 
+In order to compare the expected performance of the model, I implemented rolling origin cross validation (ROCV). 
 
-```{Training/Testing data}
+```{r}
+rocv = rolling_origin(
+  data = complete_features_with_tags %>% spread(incident, crime_count),
+  initial = floor(365.25*5),
+  assess = 14,
+  cumulative = TRUE,
+  skip = 14 
+)
+```
 
-recent_daily_incidents_wide = recent_daily_incidents %>%
-  spread(incident, crime_count)
+# Preparing Train and Test sets within ROCV
 
-rocv_by_crime2 = recent_daily_incidents_wide %>%
-  rolling_origin(
-    data = .,
-    initial = (365*4),
-    assess = 14,
-    cumulative = TRUE,
-    skip = 14 
-  )
+Next, we need to extract the training and testing sets from each ROCV iteration.
 
-train_test_splits = map(rocv_by_crime2$splits, function(split){
-  train = analysis(split) %>%
-    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Holiday_Christmas:-Holiday_Easter)
-
-  test = assessment(split) %>%
-    gather(incident, crime_count, -incident_date, -month, -year, -week, -weekday, -Holiday_Christmas:-Holiday_Easter)
-  
+```{r}
+train_test_splits = map(rocv$splits, function(split) {
+  train = analysis(split) %>% gather(incident, crime_count, -contains("Date"), -contains("Holiday"))
+  test = assessment(split) %>% gather(incident, crime_count, -contains("Date"), -contains("Holiday"))
   out = list(train = train, test = test)
-  
   return(out)
 })
 
+train_test_splits[1]
 ```
 
 # Model Implementation
 
-Next, we used h2o to build our gradient-boosted machine (GBM) model. This model performed the best against standard linear regression and random forest models. The GBM is being tested against a "simple model". Our Simple model states that we'll use the information from the last 14 days to make a prediction about what will happen next.
+Next, I used H2O to implement the forecasting model using the gradient-boosted machine (GBM). This model performed the best against standard linear regression and random forest models. Separate GBMs are fit within each iteration of the ROCV and then performance is calculated with the testing data.
 
-```{Model Building}
+To evaluate the performance of the GBM, I compared it to a "simple model" based on naive predictions. Our simple model states that we'll use the actual values from the last 14 days to predict the next 14 days. The idea is that the GBM model should perform better than this naive model.
 
-library(h2o)
-
+```{r}
+# Initialize H2O
 h2o.init()
+h2o.no_progress()
+```
 
-rocv_models = map(train_test_splits, function(x){
+```{r}
+rocv_models = map(train_test_splits, function(i) {
   
-  train = x$train %>%
-    mutate_at(vars(month:incident), list(as.factor))
+  # train/test split
+  train = i$train %>% mutate(incident = as.factor(incident))
+  test = i$test %>% mutate(incident = as.factor(incident))
   
-  test = x$test %>%
-    mutate_at(vars(month:incident), list(as.factor))
+  # convert train/test to H2O format
+  train_h2o = as.h2o(train)
+  test_h2o = as.h2o(test)
   
+  # list of features
   features = train %>%
     select(-crime_count, -incident_date) %>%
     colnames()
   
-  train_h2o = as.h2o(train)
-  
-  test_h2o = as.h2o(test)
-  
+  # target variable
   target = "crime_count"
-
+  
+  # GBM using H2O
   model = h2o.gbm(
     x = features,
     y = target,
@@ -189,9 +231,13 @@ rocv_models = map(train_test_splits, function(x){
     max_depth = 5,
     categorical_encoding = "AUTO",
     distribution = "poisson" 
-)
+  )
   
-  #Simple Predictions Calculation
+  # Extracting predictions
+  predictions = h2o.predict(model, newdata = test_h2o) %>%
+    as.vector()
+  
+  # Simple Predictions Calculation
   simple_model = train %>%
     arrange(incident, incident_date) %>% 
     group_by(incident) %>%
@@ -200,11 +246,7 @@ rocv_models = map(train_test_splits, function(x){
     mutate(incident_date = incident_date + days(14)) %>%
     select(incident_date, incident, Simple = crime_count)
   
-  #Predictions from GBM Model
-  predictions = h2o.predict(model, newdata = test_h2o) %>%
-    as.vector()
-  
-  #MASE Calculation
+  # MASE Calculation
   MASE_by_incident = test %>%
     mutate(Predictions = predictions) %>% 
     inner_join(simple_model, by = c("incident","incident_date")) %>%
@@ -218,16 +260,15 @@ rocv_models = map(train_test_splits, function(x){
   #Clean out the h2o cluster.
   h2o.removeAll()
   
-  #Reporting out Metrics
-  out = MASE_by_incident
-  
-  return(out)
+  return(MASE_by_incident)
 })
+```
 
-rocv_df = map2(rocv_models, seq_along(rocv_models), function(model, idx){
-  
+# Expected model performance
+
+```{r}
+rocv_df = map2(rocv_models, seq_along(rocv_models), function(model, idx) {
   out = model %>% mutate(rocv_idx = idx)
-  
   return(out)
 }) %>%
   bind_rows()
@@ -244,8 +285,14 @@ rocv_df %>%
 
 # Conclusion
 
-We can conclude from the final output above, that our model performed better than just our simple model in 5/9 of the incidents. 
+We can conclude from the final output above, that our model performed better than just our simple model in 5/6 of the incidents. 
 
 # Next Steps
 
 Next steps in this analysis would include hyperparameter tuning and looking to see if there is any difference in crime on holidays.
+
+# Session Information {#session-info}
+
+```{r}
+sessionInfo()
+```
