@@ -1,7 +1,7 @@
 ---
 title: "Building a High-Performing Forecasting Model using R and H2O"
 author: "David Torgerson"
-date: "3/31/2021"
+date: "4/12/2021"
 output: 
   html_document:
     toc: true
@@ -285,13 +285,13 @@ rocv_df %>%
 
 # Conclusion
 
-We can conclude from the final output above, that our model performed better than just our simple model in 5/6 of the incidents. 
+We can conclude from the final output above, that our model performed better than our naive, simple model in 5/6 of the incidents. 
 
 # Next Steps
 
-Next steps in this analysis would include hyperparameter tuning and looking to see if there is any difference in crime on holidays.
+Next steps, would include hyperparameter tuning and looking to see if there is any difference in crime counts on holidays.
 
-# Session Information {#session-info}
+# Session Information
 
 ```{r}
 sessionInfo()
